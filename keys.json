@@ -1,0 +1,12 @@
+{
+ "lookupSalt": "HxJJDH8iWiIeUHTizzjC4A==",
+ "iterations": 600000,
+ "slots": {
+  "dec504e5d88620889d216003e6358d35": {
+   "label": "код-1 (владелец)",
+   "salt": "ErHC2mh0hBGyXP1wJgVCzQ==",
+   "iv": "XsPoRgPqHf5HQoIF",
+   "wrapped": "cuWzbB5LiaouMmc3tHE2CxvvHTTgMq8QzgX+0qIe0dcXwqu/+v6jCVMNPmRul35D"
+  }
+ }
+}

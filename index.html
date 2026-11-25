@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Springland — скачать приложение</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --card: #ffffff; --text: #1b1f24; --muted: #5b6570;
+    --accent: #1565c0; --accent-text: #ffffff; --border: #d5dbe1;
+    --error: #b71c1c; --ok: #1b5e20; --bar: #e3e8ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --card: #1d2126; --text: #e8ebee; --muted: #a3acb6;
+      --accent: #64b5f6; --accent-text: #0d1b2a; --border: #343b43;
+      --error: #ef9a9a; --ok: #a5d6a7; --bar: #2b3138;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 16px;
+  }
+  main {
+    width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px 20px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .version { color: var(--muted); margin: 0 0 20px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input {
+    width: 100%; font: inherit; font-size: 1.2rem; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--text);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    width: 100%; min-height: 48px; margin-top: 14px; font: inherit; font-weight: 600;
+    border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-text); cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .status { min-height: 1.5em; margin: 14px 0 0; }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .bar { height: 8px; background: var(--bar); border-radius: 4px; overflow: hidden; margin-top: 10px; display: none; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .hint { color: var(--muted); font-size: 0.9rem; margin: 18px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Приложение Springland</h1>
+  <p class="version" id="version">Загрузка сведений о версии…</p>
+  <form id="form" autocomplete="off">
+    <label for="code">Код доступа</label>
+    <input id="code" inputmode="text" autocapitalize="characters" spellcheck="false"
+           placeholder="XXXX-XXXX-XXXX" required>
+    <button id="go" type="submit">Скачать</button>
+  </form>
+  <div class="bar" id="bar"><div id="fill"></div></div>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+  <p class="hint">Код выдаёт руководитель. После скачивания откройте файл и разрешите установку из этого источника, если телефон спросит.</p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+let manifest, keys;
+
+function status(text, kind) {
+  $("status").textContent = text;
+  $("status").className = "status" + (kind ? " " + kind : "");
+}
+
+async function loadMeta() {
+  try {
+    [manifest, keys] = await Promise.all([
+      fetch("manifest.json", { cache: "no-store" }).then((r) => r.json()),
+      fetch("keys.json", { cache: "no-store" }).then((r) => r.json()),
+    ]);
+    $("version").textContent = `Версия ${manifest.version} «${manifest.word}», ${(manifest.size / 1048576).toFixed(1)} МБ`;
+  } catch (e) {
+    $("version").textContent = "Не удалось загрузить сведения о версии. Проверьте интернет и обновите страницу.";
+  }
+}
+
+async function download(url, total) {
+  const resp = await fetch(url, { cache: "no-store" });
+  if (!resp.ok) throw new Error("http");
+  const reader = resp.body.getReader();
+  const chunks = []; let got = 0;
+  $("bar").style.display = "block";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    $("fill").style.width = Math.min(100, (got / total) * 100).toFixed(1) + "%";
+  }
+  const out = new Uint8Array(got); let pos = 0;
+  for (const c of chunks) { out.set(c, pos); pos += c.length; }
+  return out;
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!manifest || !keys) { status("Сведения о версии не загружены. Обновите страницу.", "error"); return; }
+  const code = $("code").value.replace(/[^0-9a-z]/gi, "").toUpperCase();
+  if (code.length < 12) { status("Код состоит из 12 букв и цифр, например H38T-48HG-F81L.", "error"); return; }
+  $("go").disabled = true;
+  try {
+    const lookup = new Uint8Array([...b64(keys.lookupSalt), ...enc.encode(code)]);
+    const sid = hex(await crypto.subtle.digest("SHA-256", lookup)).slice(0, 32);
+    const slot = keys.slots[sid];
+    if (!slot) { status("Неверный код или код отозван.", "error"); return; }
+    status("Проверяю код…");
+    const base = await crypto.subtle.importKey("raw", enc.encode(code), "PBKDF2", false, ["deriveKey"]);
+    const kek = await crypto.subtle.deriveKey(
+      { name: "PBKDF2", hash: "SHA-256", salt: b64(slot.salt), iterations: keys.iterations },
+      base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(slot.iv) }, kek, b64(slot.wrapped));
+    const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+    status("Скачиваю…");
+    const blob = await download(manifest.file, manifest.size + 28);
+    status("Расшифровываю…");
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: blob.slice(0, 12) }, key, blob.slice(12));
+    if (hex(await crypto.subtle.digest("SHA-256", plain)) !== manifest.sha256) throw new Error("hash");
+    const url = URL.createObjectURL(new Blob([plain], { type: "application/vnd.android.package-archive" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = manifest.filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    status(`Готово: файл ${manifest.filename} сохранён в «Загрузки».`, "ok");
+  } catch (e) {
+    status(e && e.message === "http"
+      ? "Не удалось скачать файл. Проверьте интернет и попробуйте ещё раз."
+      : "Не удалось расшифровать файл. Проверьте код или попробуйте ещё раз.", "error");
+  } finally {
+    $("go").disabled = false;
+  }
+});
+loadMeta();
+</script>
+</body>
+</html>
