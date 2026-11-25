@@ -62,14 +62,20 @@
   </form>
   <div class="bar" id="bar"><div id="fill"></div></div>
   <p class="status" id="status" role="status" aria-live="polite"></p>
-  <p class="hint">Код выдаёт руководитель. После скачивания откройте файл и разрешите установку из этого источника, если телефон спросит.</p>
+  <p class="hint">Код выдаёт руководитель. Одноразовый код можно повторить в течение 30 минут, если загрузка оборвалась. После скачивания откройте файл и разрешите установку из этого источника, если телефон спросит.</p>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-let manifest, keys;
+let manifest;
+const ERRORS = {
+  bad_code: "Неверный код. Проверьте его и попробуйте ещё раз.",
+  revoked: "Этот код отозван. Попросите у руководителя новый.",
+  expired: "Срок действия кода истёк. Попросите у руководителя новый.",
+  used: "Одноразовый код уже использован. Попросите у руководителя новый.",
+};
 
 function status(text, kind) {
   $("status").textContent = text;
@@ -78,10 +84,7 @@ function status(text, kind) {
 
 async function loadMeta() {
   try {
-    [manifest, keys] = await Promise.all([
-      fetch("manifest.json", { cache: "no-store" }).then((r) => r.json()),
-      fetch("keys.json", { cache: "no-store" }).then((r) => r.json()),
-    ]);
+    manifest = await fetch("manifest.json", { cache: "no-store" }).then((r) => r.json());
     $("version").textContent = `Версия ${manifest.version} «${manifest.word}», ${(manifest.size / 1048576).toFixed(1)} МБ`;
   } catch (e) {
     $("version").textContent = "Не удалось загрузить сведения о версии. Проверьте интернет и обновите страницу.";
@@ -107,22 +110,24 @@ async function download(url, total) {
 
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  if (!manifest || !keys) { status("Сведения о версии не загружены. Обновите страницу.", "error"); return; }
+  if (!manifest) { status("Сведения о версии не загружены. Обновите страницу.", "error"); return; }
   const code = $("code").value.replace(/[^0-9a-z]/gi, "").toUpperCase();
   if (code.length < 12) { status("Код состоит из 12 букв и цифр, например H38T-48HG-F81L.", "error"); return; }
   $("go").disabled = true;
   try {
-    const lookup = new Uint8Array([...b64(keys.lookupSalt), ...enc.encode(code)]);
-    const sid = hex(await crypto.subtle.digest("SHA-256", lookup)).slice(0, 32);
-    const slot = keys.slots[sid];
-    if (!slot) { status("Неверный код или код отозван.", "error"); return; }
     status("Проверяю код…");
-    const base = await crypto.subtle.importKey("raw", enc.encode(code), "PBKDF2", false, ["deriveKey"]);
-    const kek = await crypto.subtle.deriveKey(
-      { name: "PBKDF2", hash: "SHA-256", salt: b64(slot.salt), iterations: keys.iterations },
-      base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
-    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(slot.iv) }, kek, b64(slot.wrapped));
-    const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+    let resp;
+    try {
+      resp = await fetch(manifest.unlock, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }),
+      });
+    } catch (e) { throw new Error("http"); }
+    const answer = await resp.json().catch(() => ({}));
+    if (!resp.ok || !answer.key) {
+      status(ERRORS[answer.error] || "Не удалось проверить код. Попробуйте ещё раз.", "error");
+      return;
+    }
+    const key = await crypto.subtle.importKey("raw", b64(answer.key), "AES-GCM", false, ["decrypt"]);
     status("Скачиваю…");
     const blob = await download(manifest.file, manifest.size + 28);
     status("Расшифровываю…");
